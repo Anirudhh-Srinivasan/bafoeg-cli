@@ -8,6 +8,11 @@
 domain:example.com
 domain:example.org
 domain:example.net
+# Reserved TLDs (RFC 2606/6761), never deliverable
+domain:example
+domain:invalid
+domain:test
+domain:localhost
 
 # GitHub bots / system addresses (not personal data)
 noreply@github.com
