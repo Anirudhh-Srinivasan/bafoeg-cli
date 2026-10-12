@@ -186,14 +186,14 @@ PYTHONPATH=src python3 -m pytest tests/ -v
 - **gitleaks** – blockiert eingecheckte Secrets
 
 Die ausführliche GitHub-Actions-Workflow-Datei liegt unter
-`.github/workflows/pii-guard.yml.example`. Sie ist mit `.example`-Endung
-gespeichert, weil der Standard-GitHub-PAT des Maintainers keinen
-`workflow`-Scope hat und GitHub das Pushen einer echten `.yml`-Datei
-in `.github/workflows/` ansonsten blockiert.
+`docs/ci/pii-guard.yml`. Sie ist nicht im Standard-Pfad
+`.github/workflows/`, weil der Standard-GitHub-PAT des Maintainers
+keinen `workflow`-Scope hat und GitHub das Pushen einer `.yml`-Datei
+in `.github/workflows/` blockiert (auch mit beliebigem Suffix).
 
-Aktivierung: Datei nach `pii-guard.yml` umbenennen (oder Inhalt in der
-GitHub-Web-UI unter Settings → Actions einfügen). Anschließend läuft
-der PII-Guard auf jedem Push und PR.
+Aktivierung: Inhalt nach `.github/workflows/pii-guard.yml` kopieren
+(über die GitHub-Web-UI oder mit einem Token, der `workflow`-Scope
+enthält). Anschließend läuft der PII-Guard auf jedem Push und PR.
 
 Lokal testen:
 

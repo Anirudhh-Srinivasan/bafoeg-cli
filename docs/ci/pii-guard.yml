@@ -1,13 +1,14 @@
 # PII guard: blocks invented personal data (mail addresses, Matrikelnummern)
 # and committed secrets. Runs on every push to every branch and on every PR.
 #
-# Diese Datei endet auf .example, weil der Standard-GitHub-PAT des
+# Diese Datei liegt in docs/ci/, weil der Standard-GitHub-PAT des
 # Maintainers keinen `workflow`-Scope hat und GitHub das Pushen einer
-# echten .yml-Datei in .github/workflows/ blockiert.
-# Aktivierung:
-#   1. Datei umbenennen auf `pii-guard.yml` (oder Inhalt in die Web-UI
-#      kopieren: Settings → Actions → New workflow).
-#   2. `scripts/pii_guard.py` und `.pii-allowlist` sind bereits im Repo.
+# echten .yml-Datei in .github/workflows/ blockiert (auch mit .example
+# im Namen). Aktivierung:
+#   1. Inhalt nach .github/workflows/pii-guard.yml kopieren
+#      (Datei in der GitHub-Web-UI anlegen oder die Workflow-Datei
+#      mit einem Token mit workflow-Scope pushen).
+#   2. scripts/pii_guard.py und .pii-allowlist sind bereits im Repo.
 #   3. Optional: gitleaks hinzufügen (siehe Kommentar unten).
 # Details: scripts/pii_guard.py, exceptions: .pii-allowlist / .gitleaksignore
 name: pii-guard
@@ -27,9 +28,9 @@ jobs:
       - name: Keine Mailadressen/Matrikelnummern außer Allowlist
         run: python3 scripts/pii_guard.py
 
-  # gitleaks-Block analog zum cli-mcp-template (siehe dort). Ist hier
-  # nur auskommentiert, weil keine gitleaks-Version festgenagelt ist.
-  # Zum Aktivieren entkommentieren und gitleaks-Version/SHA pinnen.
+  # gitleaks-Block analog zum cli-mcp-template. Hier nur auskommentiert,
+  # weil keine gitleaks-Version festgenagelt ist. Zum Aktivieren
+  # entkommentieren und gitleaks-Version/SHA pinnen.
   # gitleaks:
   #   runs-on: ubuntu-latest
   #   env:
