@@ -185,7 +185,21 @@ PYTHONPATH=src python3 -m pytest tests/ -v
 - **PII-Guard** (`scripts/pii_guard.py`) – blockiert erfundene Mailadressen / Matrikelnummern
 - **gitleaks** – blockiert eingecheckte Secrets
 
-Beide Workflows laufen auf jedem Push und PR.
+Die ausführliche GitHub-Actions-Workflow-Datei liegt unter
+`.github/workflows/pii-guard.yml.example`. Sie ist mit `.example`-Endung
+gespeichert, weil der Standard-GitHub-PAT des Maintainers keinen
+`workflow`-Scope hat und GitHub das Pushen einer echten `.yml`-Datei
+in `.github/workflows/` ansonsten blockiert.
+
+Aktivierung: Datei nach `pii-guard.yml` umbenennen (oder Inhalt in der
+GitHub-Web-UI unter Settings → Actions einfügen). Anschließend läuft
+der PII-Guard auf jedem Push und PR.
+
+Lokal testen:
+
+```bash
+python3 scripts/pii_guard.py
+```
 
 ## Lizenz
 
