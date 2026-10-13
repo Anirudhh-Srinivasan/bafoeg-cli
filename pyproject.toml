@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bafoeg-cli"
-version = "0.1.0"
-description = "BAföG-CLI: Bedarfsrechner, Fristen, Formblätter und offizielle Links"
+version = "0.2.0"
+description = "BAföG-CLI: Bedarfsrechner, Fristen, Formblätter, Links – und Playwright-Automation gegen BAföG Digital (bafoeg-digital.de) für Login, Antragsstatus, Formblatt 1 (Entwurf/Submit, mit --confirm) und Dokumenten-Upload."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "smlfg"}]
-keywords = ["bafoeg", "cli", "bildung", "foerderung", "studenten"]
+keywords = ["bafoeg", "cli", "bildung", "foerderung", "studenten", "bafoeg-digital", "bundid"]
 classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
@@ -19,11 +19,22 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Office/Business :: Financial",
 ]
-dependencies = []
+dependencies = [
+    "PyYAML>=6.0",
+]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    # playwright wird für die Automation-Tests (test_session, test_antrag_api,
+    # test_formblatt1) benötigt. Vor 'pytest' bitte einmalig
+    # 'playwright install chromium' ausführen.
+    "playwright>=1.40",
+]
+automation = [
+    # Wird nur für `bafoeg login/status/antrag/docs` gegen bafoeg-digital.de
+    # benötigt; der Bedarfsrechner und die Fristen laufen auch ohne Playwright.
+    "playwright>=1.40",
 ]
 
 [project.scripts]

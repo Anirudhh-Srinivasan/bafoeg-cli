@@ -239,6 +239,253 @@ def _print_kategorie(kat: dict) -> None:
     print()
 
 
+# ---- Automation gegen bafoeg-digital.de ---------------------------------
+
+
+def cmd_login(args: argparse.Namespace) -> int:
+    """Login gegen BAföG Digital via BundID.
+
+    Modi:
+      password   headless mit BundID-Benutzername+Passwort
+      manual     --headed: User macht eID/ELSTER/2FA selbst
+      auto       versucht password, fällt auf manual zurück
+
+    Zugangsdaten aus Env BAFOEG_USERNAME / BAFOEG_PASSWORD oder Prompt.
+    """
+    from .automation.auth import LoginMethod, run_login
+    from .automation.session import (
+        credentials_present, prompt_username_password, session_exists,
+    )
+
+    method = LoginMethod(args.method)
+    username = password = ""
+    if method in (LoginMethod.PASSWORD, LoginMethod.AUTO):
+        if credentials_present():
+            username, password = prompt_username_password()
+        elif method == LoginMethod.PASSWORD:
+            # Strict: ohne Credentials kein headless-Login
+            print(
+                "Methode 'password' verlangt BAFOEG_USERNAME und "
+                "BAFOEG_PASSWORD in der Umgebung.",
+                file=sys.stderr,
+            )
+            return 2
+
+    headless = not args.headed
+    result = run_login(
+        method=method,
+        username=username,
+        password=password,
+        headless=headless,
+        manual_max_wait_s=args.manual_max_wait,
+    )
+
+    payload: dict[str, Any] = {
+        "befehl": "login",
+        "methode": result.method,
+        "erfolg": result.success,
+        "final_url": result.final_url,
+        "hinweis": result.note,
+        "session_geschrieben": result.session_written,
+        "dauer_s": round(result.finished_at - result.started_at, 2),
+    }
+    if result.stuck_at:
+        payload["stuck_at"] = result.stuck_at
+    if result.extra:
+        payload["extra"] = result.extra
+
+    if args.json:
+        _out(payload, as_json=True)
+    else:
+        marker = "OK" if result.success else "FEHLGESCHLAGEN"
+        print(f"Login: {marker}")
+        print(f"  Methode:           {result.method}")
+        print(f"  Ziel-URL:          {result.final_url}")
+        print(f"  Session gespeichert: {result.session_written}")
+        print(f"  Dauer:             {result.finished_at - result.started_at:.1f}s")
+        if result.note:
+            print(f"  Hinweis:           {result.note}")
+        if result.stuck_at:
+            print(f"  Stecken geblieben bei: {result.stuck_at}")
+    return 0 if result.success else 3
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    """Antragsstatus + Postfach lesen."""
+    from .automation.antrag import fetch_status
+
+    uebersicht = fetch_status()
+    payload = {
+        "befehl": "status",
+        "abgefragt_am": uebersicht.abgefragt_am,
+        "quelle": uebersicht.quelle,
+        "antraege": [a.to_dict() for a in uebersicht.anträge],
+        "nachrichten": uebersicht.nachrichten,
+    }
+    if args.json:
+        _out(payload, as_json=True)
+    else:
+        print("BAföG-Digital: Antragsstatus")
+        print("=" * 60)
+        if not uebersicht.anträge:
+            print("Keine Anträge gefunden.")
+        for a in uebersicht.anträge:
+            print(f"  Antrag {a.antrag_id}: {a.status}")
+            if a.bewilligungszeitraum_von:
+                print(f"    Zeitraum: {a.bewilligungszeitraum_von} – {a.bewilligungszeitraum_bis}")
+            if a.aktualisiert:
+                print(f"    Aktualisiert: {a.aktualisiert}")
+        if uebersicht.nachrichten:
+            print("\nHinweise/Nachrichten:")
+            for n in uebersicht.nachrichten:
+                if isinstance(n, dict) and "hinweis" in n:
+                    print(f"  - {n['hinweis']}")
+                elif isinstance(n, dict) and "_meta" in n:
+                    for m in n["_meta"]:
+                        print(f"  (info) {m}")
+                else:
+                    print(f"  - {n}")
+    return 0
+
+
+def cmd_antrag_fill(args: argparse.Namespace) -> int:
+    """Formblatt 1 aus YAML-Datei ausfüllen und Entwurf speichern."""
+    from .automation.formblatt1 import load_formblatt1_from_yaml
+    from .automation.antrag import entwurf_speichern
+
+    if not args.daten:
+        print("--daten <pfad> ist erforderlich", file=sys.stderr)
+        return 2
+    try:
+        fb1 = load_formblatt1_from_yaml(args.daten)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Fehler beim Laden der YAML-Datei: {e}", file=sys.stderr)
+        return 2
+
+    ok, missing = fb1.validate()
+    payload: dict[str, Any] = {
+        "befehl": "antrag fill",
+        "quelle_yaml": args.daten,
+        "formblatt_vollstaendig": ok,
+        "fehlende_pflichtfelder": missing,
+        "felder_ignoriert": fb1.metadata.get("unknown_keys", []),
+    }
+    if not ok:
+        if args.require_complete:
+            payload["hinweis"] = (
+                "Formblatt 1 unvollständig – mit --require-complete "
+                "wird kein Entwurf gespeichert."
+            )
+            if args.json:
+                _out(payload, as_json=True)
+            else:
+                print("Formblatt 1 unvollständig:")
+                for k in missing:
+                    print(f"  - {k}")
+            return 4
+        payload["hinweis"] = (
+            "Formblatt 1 unvollständig – es wird trotzdem versucht, "
+            "einen Entwurf zu speichern. Pflichtfelder prüfen!"
+        )
+
+    ergebnis = entwurf_speichern(fb1)
+    payload["ergebnis"] = ergebnis.to_dict()
+    if args.json:
+        _out(payload, as_json=True)
+    else:
+        print("Formblatt 1 – Entwurf speichern")
+        print("=" * 60)
+        if not ok:
+            print("WARNUNG: Pflichtfelder fehlen:")
+            for k in missing:
+                print(f"  - {k}")
+            print()
+        print(f"API-Antwort: HTTP {ergebnis.status_code} – {ergebnis.note}")
+        if ergebnis.antrag_id:
+            print(f"Antrag-ID: {ergebnis.antrag_id}")
+    return 0 if ergebnis.success else 5
+
+
+def cmd_antrag_submit(args: argparse.Namespace) -> int:
+    """Antrag ENDGÜLTIG einreichen. Verlangt --confirm."""
+    from .automation.formblatt1 import load_formblatt1_from_yaml
+    from .automation.antrag import antrag_einreichen
+
+    if not args.confirm:
+        print(
+            "ENDGÜLTIGES Einreichen verweigert: bestätige mit --confirm. "
+            "Bis dahin nur Entwurf mit 'bafoeg antrag fill' speichern.",
+            file=sys.stderr,
+        )
+        return 6
+    if not args.daten:
+        print("--daten <pfad> ist erforderlich", file=sys.stderr)
+        return 2
+    try:
+        fb1 = load_formblatt1_from_yaml(args.daten)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Fehler beim Laden der YAML-Datei: {e}", file=sys.stderr)
+        return 2
+    ergebnis = antrag_einreichen(fb1, confirm=True)
+    payload = {
+        "befehl": "antrag submit",
+        "quelle_yaml": args.daten,
+        "ergebnis": ergebnis.to_dict(),
+    }
+    if args.json:
+        _out(payload, as_json=True)
+    else:
+        print("Formblatt 1 – ENDGÜLTIG einreichen")
+        print("=" * 60)
+        print(f"API-Antwort: HTTP {ergebnis.status_code} – {ergebnis.note}")
+        if ergebnis.antrag_id:
+            print(f"Antrag-ID: {ergebnis.antrag_id}")
+    return 0 if ergebnis.success else 5
+
+
+def cmd_docs_upload(args: argparse.Namespace) -> int:
+    """Dokument (Beleg, Immatrikulationsbescheinigung, ...) hochladen."""
+    from .automation.antrag import dokument_uploaden
+
+    if not args.datei:
+        print("--datei <pfad> ist erforderlich", file=sys.stderr)
+        return 2
+    res = dokument_uploaden(
+        args.datei,
+        dokument_typ=args.typ,
+        beschreibung=args.beschreibung or "",
+        antrag_id=args.antrag_id or "",
+    )
+    payload = {
+        "befehl": "docs upload",
+        "datei": res.dokument_name,
+        "typ": args.typ,
+        "beschreibung": args.beschreibung or "",
+        "antrag_id": args.antrag_id or "",
+        "ergebnis": res.to_dict(),
+    }
+    if args.json:
+        _out(payload, as_json=True)
+    else:
+        print("Dokument-Upload")
+        print("=" * 60)
+        print(f"Datei:   {res.dokument_name}")
+        print(f"Typ:     {args.typ}")
+        print(f"HTTP:    {res.status_code} – {res.note}")
+    return 0 if res.success else 5
+
+
+def cmd_formblatt_template(args: argparse.Namespace) -> int:
+    """YAML-Template für Formblatt 1 ausgeben."""
+    from .automation.formblatt1 import formblatt1_template_yaml
+    if args.ausgeben:
+        print(formblatt1_template_yaml(), end="")
+    else:
+        print("Hinweis: 'bafoeg formblatt-template' druckt das Template auf stdout.")
+    return 0
+
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="bafoeg",
@@ -335,6 +582,104 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pl.add_argument("--json", action="store_true", help="Ausgabe als JSON")
     pl.set_defaults(func=cmd_links)
+
+    # ---- Automation gegen bafoeg-digital.de ----
+
+    plogin = sub.add_parser(
+        "login",
+        help=(
+            "Login gegen BAföG Digital (via BundID). "
+            "headless mit Benutzername+Passwort oder --headed für eID/ELSTER/2FA."
+        ),
+    )
+    plogin.add_argument(
+        "--method",
+        choices=["password", "manual", "auto"],
+        default="auto",
+        help="Login-Methode (default: auto)",
+    )
+    plogin.add_argument(
+        "--headed",
+        action="store_true",
+        help="Browser sichtbar starten (nötig für eID/ELSTER/2FA-Fallback)",
+    )
+    plogin.add_argument(
+        "--manual-max-wait",
+        type=int,
+        default=300,
+        help="Sekunden, die auf den manuellen Login gewartet wird",
+    )
+    plogin.add_argument("--json", action="store_true", help="Ausgabe als JSON")
+    plogin.set_defaults(func=cmd_login)
+
+    pstatus = sub.add_parser(
+        "status",
+        help="Antragsstatus + Postfachsnachrichten lesen (braucht gültige Session).",
+    )
+    pstatus.add_argument("--json", action="store_true", help="Ausgabe als JSON")
+    pstatus.set_defaults(func=cmd_status)
+
+    pa = sub.add_parser(
+        "antrag",
+        help="Antrags-Operationen gegen BAföG Digital.",
+    )
+    pa_sub = pa.add_subparsers(dest="antrag_befehl")
+    pa_fill = pa_sub.add_parser(
+        "fill",
+        help="Formblatt 1 aus YAML-Datei laden und Entwurf speichern.",
+    )
+    pa_fill.add_argument("--daten", required=True, help="Pfad zur YAML-Datei (Formblatt 1)")
+    pa_fill.add_argument(
+        "--require-complete",
+        action="store_true",
+        help="Bei fehlenden Pflichtfeldern gar nicht erst speichern",
+    )
+    pa_fill.add_argument("--json", action="store_true", help="Ausgabe als JSON")
+    pa_fill.set_defaults(func=cmd_antrag_fill)
+    pa_submit = pa_sub.add_parser(
+        "submit",
+        help="Antrag ENDGÜLTIG einreichen (verlangt --confirm).",
+    )
+    pa_submit.add_argument("--daten", required=True, help="Pfad zur YAML-Datei (Formblatt 1)")
+    pa_submit.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Explizit bestätigen, dass der Antrag endgültig eingereicht werden soll",
+    )
+    pa_submit.add_argument("--json", action="store_true", help="Ausgabe als JSON")
+    pa_submit.set_defaults(func=cmd_antrag_submit)
+    pa.set_defaults(func=lambda a: (pa.print_help() or 0))
+
+    pdocs = sub.add_parser(
+        "docs",
+        help="Dokumenten-Operationen gegen BAföG Digital.",
+    )
+    pdocs_sub = pdocs.add_subparsers(dest="docs_befehl")
+    pu = pdocs_sub.add_parser(
+        "upload",
+        help="Beleg/Immatrikulationsbescheinigung o.Ä. hochladen.",
+    )
+    pu.add_argument("--datei", required=True, help="Pfad zur Datei")
+    pu.add_argument(
+        "--typ",
+        default="beleg",
+        help="Dokumenttyp (z.B. immatrikulation, einkommensnachweis, ...)",
+    )
+    pu.add_argument("--beschreibung", default="", help="Kurzbeschreibung")
+    pu.add_argument("--antrag-id", default="", help="Optionale Antrags-ID")
+    pu.add_argument("--json", action="store_true", help="Ausgabe als JSON")
+    pu.set_defaults(func=cmd_docs_upload)
+    pdocs.set_defaults(func=lambda a: (pdocs.print_help() or 0))
+
+    ptpl = sub.add_parser(
+        "formblatt-template",
+        help="YAML-Template für Formblatt 1 ausgeben.",
+    )
+    ptpl.add_argument(
+        "--ausgeben", action="store_true",
+        help="Template tatsächlich auf stdout drucken",
+    )
+    ptpl.set_defaults(func=cmd_formblatt_template)
 
     return p
 

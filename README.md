@@ -24,13 +24,161 @@ Danach steht das Kommando `bafoeg` zur Verfügung.
 ## Befehle
 
 ```text
-bafoeg rechner     # BAföG-Bedarfsrechner (§13/§13a/§23/§25/§29)
-bafoeg fristen     # Antrags-, Folgeantrags- und §48-Fristen
-bafoeg unterlagen  # Formblätter 1-9 + Checkliste je nach Situation
-bafoeg links       # BAföG Digital, Ämterverzeichnis, Rechtstexte
+bafoeg rechner               # BAföG-Bedarfsrechner (§13/§13a/§23/§25/§29)
+bafoeg fristen               # Antrags-, Folgeantrags- und §48-Fristen
+bafoeg unterlagen            # Formblätter 1-9 + Checkliste je nach Situation
+bafoeg links                 # BAföG Digital, Ämterverzeichnis, Rechtstexte
+bafoeg login                 # Login BAföG Digital (BundID) – headless oder --headed
+bafoeg status                # Antragsstatus + Postfach (braucht Session)
+bafoeg antrag fill           # Formblatt 1 aus YAML → Entwurf speichern
+bafoeg antrag submit         # Antrag ENDGÜLTIG einreichen (verlangt --confirm)
+bafoeg docs upload           # Beleg/Dokument hochladen
+bafoeg formblatt-template    # YAML-Template für Formblatt 1
 bafoeg --version
 bafoeg --help
 ```
+
+## Automation gegen BAföG Digital
+
+> **Status: experimentell.** Die Module `bafoeg_cli.automation.*` sind
+> implementiert, der Code ist getestet (Unit-Tests mit gemockter
+> Backend-API und gefakter Session), aber **kein End-to-End-Lauf
+> gegen `bafoeg-digital.de` wurde live verifiziert** – das geht nur
+> mit Samuels BundID-Zugang (siehe unten). Live-Tests, die echte
+> 2FA/eID-Schritte durchlaufen, sind bewusst nicht Teil der CI.
+
+### Was die Automation-Kommandos tun
+
+| Befehl                            | Was passiert                                                                                                       |
+|-----------------------------------|--------------------------------------------------------------------------------------------------------------------|
+| `bafoeg login`                    | Spielt den Login-Flow gegen BundID durch, speichert die Session in `$XDG_CONFIG_HOME/bafoeg-cli/session.json`.    |
+| `bafoeg status`                   | Fragt Antragsstatus + Postfachsnachrichten gegen die Backend-API ab.                                               |
+| `bafoeg antrag fill --daten F`    | Liest Formblatt 1 aus `F` (YAML), validiert, speichert Entwurf gegen die Backend-API (`/antraege/entwurf`).        |
+| `bafoeg antrag submit --daten F`  | Wie oben, **aber** ruft `/antraege/einreichen` (endgültig) – verlangt zwingend `--confirm`.                         |
+| `bafoeg docs upload --datei D`    | Multipart-Upload eines Belegs/Dokuments (`/dokumente/upload`).                                                      |
+| `bafoeg formblatt-template`       | Druckt ein ausgefülltes YAML-Template mit allen Formblatt-1-Feldern (mit Kommentaren).                              |
+
+Jeder dieser Befehle unterstützt `--json` für strukturierte Ausgabe
+an Agenten.
+
+### Login-Wege
+
+`bafoeg login` hat zwei Methoden:
+
+- **`password`** (headless): BundID-Account mit Benutzername+Passwort.
+  Startet Chromium headless, füllt das Formular auf `id.bund.de` und
+  speichert die Session. **Voraussetzung:** BundID-Konto mit
+  Benutzername+Passwort-Verfahren – **nicht** für eID/ELSTER.
+- **`manual`** (`--headed`): sichtbarer Browser. Der User authentifiziert
+  sich selbst (AusweisApp2/eID, ELSTER-Zertifikat oder 2FA-Push). Das
+  Programm wartet bis zu `--manual-max-wait` Sekunden und speichert
+  die Session, sobald der Redirect zurück auf `bafoeg-digital.de`
+  erfolgt ist.
+- **`auto`** (Default): versucht erst `password`, fällt auf `manual`
+  mit `--headed` zurück.
+
+Für eID/ELSTER/2FA ist **immer** der `--headed`-Weg nötig. Das ist
+kein Workaround, sondern Absicht: Diese Verfahren haben eine
+kryptographische Komponente (Kartenleser, Zertifikat-Dialog,
+Push-Bestätigung), die nicht scriptbar ist.
+
+Zugangsdaten werden ausschließlich aus den Umgebungsvariablen
+`BAFOEG_USERNAME` und `BAFOEG_PASSWORD` gelesen (oder interaktiv in
+einem TTY abgefragt) und **nie** auf der Festplatte gespeichert.
+Persistente Session (`session.json`): Modus `0600`.
+
+### Was live getestet ist vs. was Samuels Zugang braucht
+
+Live verifiziert (gegen `bafoeg-digital.de`) sind nur die im
+Recherche-Commit dokumentierten Selektoren und URLs sowie der
+`/api/v1/public/maintenance-status`-Endpunkt – ohne Login und ohne
+eigene Daten.
+
+Was **nicht** live getestet werden konnte (braucht Samuels BundID):
+
+- Funktioniert der headless `password`-Login? → id.bund.de lädt
+  unter Headless oft eine andere Login-Maske (CAPTCHA-Challenge),
+  abhängig vom Browser-Fingerprint.
+- Stimmen die Pfade `/antraege`, `/antraege/entwurf`,
+  `/antraege/einreichen`, `/dokumente/upload`? → plausibel, aber
+  nicht öffentlich dokumentiert (Annahme auf Basis der
+  Frontend-Routen).
+- Akzeptiert die Backend-API das genaue Payload-Schema
+  (`formblatt/version/daten` mit `camelCase`-Unterstrich-Mix)?
+
+Was Samuel liefern muss, um das zu klären:
+
+1. **BundID-Account** für die Test-Person, mit
+   Benutzername+Passwort **und** idealerweise einem Test-eID,
+   damit beide Login-Wege durchgespielt werden können.
+2. **Ein leeres BAföG-Digital-Konto** ohne Echtantrag (oder mit
+   einem absichtlich gestellten Test-Antrag, der im Anschluss
+   zurückgezogen wird). Wir wollen versehentliche echte Anträge
+   vermeiden.
+3. Falls vorhanden: HAR oder Postman-Collection eines echten
+   Login-Calls (gegen `id.bund.de` und gegen
+   `backend.bafoeg-digital.de`), damit wir die exakten
+   Endpunkt-Pfade und Feldnamen verifizieren können.
+4. **Bestätigung des endgültigen Submits.** `bafoeg antrag submit
+   --confirm` ruft eine echte Einreichung aus – das ist nicht
+   reversibel. Vor Live-Tests einmal mit Samuels OK, danach
+   idealerweise in einer Staging-Instanz.
+
+### Beispiel-Session
+
+```bash
+# Einmalig: headless anmelden (BundID mit Benutzername+Passwort)
+BAFOEG_USERNAME='max@example.org' BAFOEG_PASSWORD='...' \
+  bafoeg login --method password --json
+
+# ODER: eID/ELSTER/2FA – interaktiv
+bafoeg login --method manual --headed --json
+# (Browser bleibt offen, bis Redirect zurück erfolgt)
+
+# Danach:
+bafoeg status --json
+
+bafoeg antrag fill --daten antrag.yaml --require-complete --json
+bafoeg antrag submit --daten antrag.yaml --confirm --json   # endgültig
+bafoeg docs upload --datei immatrikulation.pdf \
+                   --typ immatrikulation \
+                   --antrag-id ANT-001 --json
+```
+
+`antrag.yaml` (Beispiel; `bafoeg formblatt-template --ausgeben`
+liefert die kommentierte Vorlage):
+
+```yaml
+vorname: Max
+nachname: Mustermann
+geburtsdatum: 01.01.2000
+staatsangehoerigkeit: deutsch
+strasse: Beispielweg
+hausnummer: "12"
+plz: "12345"
+ort: Berlin
+email: max@example.org
+iban: DE89370400440532013000
+ausbildung_typ: studium
+ausbildung_ort: Beispiel-Universität Berlin
+ausbildung_beginn: 01.10.2026
+ausbildung_ende_geplant: 30.09.2029
+bewilligungszeitraum_von: 01.10.2026
+bewilligungszeitraum_bis: 30.09.2027
+bei_eltern_wohnend: false
+eigene_krankenversicherung: true
+```
+
+### Sicherheits-Modell
+
+- Klartext-Passwörter werden **nie** persistiert, **nie** geloggt.
+- Session-Cookies leben in `$XDG_CONFIG_HOME/bafoeg-cli/session.json`,
+  Modus `0600`. Der Inhalt erlaubt Zugang zum BAföG-Konto – das
+  Verzeichnis gehört dem Anwender (Modus `0700`).
+- `antrag submit` ohne `--confirm` wird hart verweigert (Exit-Code 6),
+  damit niemand versehentlich "das echte Leben" einreicht.
+- Antragsdaten aus `antrag.yaml` verlassen das Gerät nur via
+  HTTPS-POST an `backend.bafoeg-digital.de`.
 
 ### `rechner` – Bedarfsrechner
 
@@ -174,11 +322,18 @@ JSON-Ausgabe enthält `quelle` und `stand`.
 ## Tests
 
 ```bash
+# Frischer venv, genauso wie CI:
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
 pip install -e ".[dev]"
-PYTHONPATH=src python3 -m pytest tests/ -v
+playwright install chromium
+PYTHONPATH=src pytest tests/ -v
 ```
 
-50 Tests (Werte, Rechner, Fristen, Unterlagen, Links, CLI-Smoke).
+78 Tests (Werte, Rechner, Fristen, Unterlagen, Links, Session,
+Formblatt 1, Antrags-API-Wrapper mit gemockter HTTP/Backend,
+CLI-Smoke). Stand 2026-10-13.
 
 ## CI
 
