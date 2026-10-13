@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from typing import Any
 
@@ -24,12 +25,23 @@ def _out(data: Any, as_json: bool, pretty: bool = True) -> None:
     """Ausgabe als JSON (für Agenten) oder als lesbarer Text."""
     if as_json:
         if pretty:
-            print(json.dumps(data, ensure_ascii=False, indent=2))
+            print(json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False))
         else:
-            print(json.dumps(data, ensure_ascii=False))
+            print(json.dumps(data, ensure_ascii=False, allow_nan=False))
         return
     # Plaintext – einfache, menschliche Darstellung
     print(json.dumps(data, ensure_ascii=False, indent=2))
+
+
+def _finite_float(value: str) -> float:
+    """Parse a finite decimal amount for calculator CLI arguments."""
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"ungültige Zahl: {value}") from exc
+    if not math.isfinite(parsed):
+        raise argparse.ArgumentTypeError("der Betrag muss endlich sein")
+    return parsed
 
 
 def cmd_rechner(args: argparse.Namespace) -> int:
@@ -515,10 +527,10 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--verheiratet", action="store_true", help="Verheiratet / Lebenspartnerschaft")
     pr.add_argument("--eltern-getrennt", action="store_true", help="Eltern getrennt lebend")
     pr.add_argument(
-        "--einkommen-vater", type=float, default=0.0, help="Monatliches Nettoeinkommen Vater"
+        "--einkommen-vater", type=_finite_float, default=0.0, help="Monatliches Nettoeinkommen Vater"
     )
     pr.add_argument(
-        "--einkommen-mutter", type=float, default=0.0, help="Monatliches Nettoeinkommen Mutter"
+        "--einkommen-mutter", type=_finite_float, default=0.0, help="Monatliches Nettoeinkommen Mutter"
     )
     pr.add_argument(
         "--weitere-kinder",
@@ -527,11 +539,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Weitere unterhaltsberechtigte Kinder im Haushalt",
     )
     pr.add_argument(
-        "--eigen-einkommen", type=float, default=0.0, help="Eigenes Bruttoeinkommen im Bewilligungszeitraum"
+        "--eigen-einkommen", type=_finite_float, default=0.0, help="Eigenes Bruttoeinkommen im Bewilligungszeitraum"
     )
     pr.add_argument(
         "--ehegatte-einkommen",
-        type=float,
+        type=_finite_float,
         default=0.0,
         help="Einkommen Ehegatte/eingetr. Lebenspartner (Monat)",
     )
@@ -539,7 +551,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--eigene-kinder", type=int, default=0, help="Eigene Kinder ohne Ausbildung"
     )
     pr.add_argument(
-        "--vermoegen", type=float, default=0.0, help="Eigenes Vermögen (§29)"
+        "--vermoegen", type=_finite_float, default=0.0, help="Eigenes Vermögen (§29)"
     )
     pr.add_argument(
         "--json", action="store_true", help="Ausgabe als JSON (für Agenten)"

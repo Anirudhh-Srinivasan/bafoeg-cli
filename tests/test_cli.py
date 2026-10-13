@@ -36,3 +36,10 @@ def test_cli_links_unbekannte_kategorie():
 def test_cli_version():
     rc = main(["--version"])
     assert rc == 0
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "1e999"])
+def test_rechner_rejects_non_finite_amounts(value):
+    with pytest.raises(SystemExit) as exc:
+        main(["rechner", "--json", "--einkommen-vater", value])
+    assert exc.value.code == 2
